@@ -70,6 +70,21 @@ export function toast(msg, kind = 'ok') {
   setTimeout(() => t.remove(), 2800);
 }
 
+// navigator.clipboard only exists in secure contexts; plain http (LAN IP) needs execCommand.
+export async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = h('textarea', { value: text, readOnly: true, style: 'position:fixed;opacity:0' });
+    document.body.append(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  }
+}
+
 export function brand() {
   return h(
     'a',

@@ -7,15 +7,12 @@ import express from 'express';
 import multer from 'multer';
 
 const UID_RE = /^[0-9a-f]{64}$/;
-const CODE_RE = /^[a-z2-7]{8}$/;
+// The collection's name is its URL: /c/<name>.
+const NAME_RE = /^[A-Za-z0-9]{1,32}$/;
 const SID_RE = /^[0-9a-f]{16}$/;
 const TEN_YEARS = 10 * 365 * 24 * 3600;
 
 const rand = (n) => crypto.randomBytes(n).toString('hex');
-
-// Base32 code: short enough to type, 40 bits is plenty for unlisted links.
-const newCode = () =>
-  [...crypto.randomBytes(8)].map((b) => 'abcdefghijklmnopqrstuvwxyz234567'[b & 31]).join('');
 
 // Client-supplied relative path -> normalized path, or null if unsafe.
 // This is the only gate between user input and the filesystem layout.
@@ -106,12 +103,11 @@ export function createApp({ dataDir, maxFileMB = 500, maxFiles = 5000, ttlMs = 3
   const expiresAt = (c) => c.created_at + ttlMs;
 
   // Files first, row second: a crash in between is retried by the next sweep.
-  function sweep() {
-    for (const { code } of q.expired.all(Date.now() - ttlMs)) {
-      fs.rmSync(path.join(filesDir, code), { recursive: true, force: true });
-      q.deleteCollection.run(code);
-    }
+  function purge(code) {
+    fs.rmSync(path.join(filesDir, code), { recursive: true, force: true });
+    q.deleteCollection.run(code);
   }
+  const sweep = () => q.expired.all(Date.now() - ttlMs).forEach(({ code }) => purge(code));
   sweep();
 
   const subDir = (code, sid) => path.join(filesDir, code, sid);
@@ -149,7 +145,7 @@ export function createApp({ dataDir, maxFileMB = 500, maxFiles = 5000, ttlMs = 3
 
   // Resolve :code once; 404 for anything malformed or unknown.
   app.param('code', (req, res, next, code) => {
-    const c = CODE_RE.test(code) ? q.collection.get(code) : undefined;
+    const c = NAME_RE.test(code) ? q.collection.get(code) : undefined;
     if (!c || expiresAt(c) <= Date.now()) return res.status(404).json({ error: '收集不存在' });
     req.collection = c;
     next();
@@ -170,10 +166,13 @@ export function createApp({ dataDir, maxFileMB = 500, maxFiles = 5000, ttlMs = 3
   });
 
   app.post('/api/collections', (req, res) => {
-    const title = String(req.body?.title ?? '').trim().slice(0, 100);
-    if (!title) return res.status(400).json({ error: '标题不能为空' });
-    const code = newCode();
-    q.insertCollection.run(code, title, req.uid, Date.now());
+    const code = String(req.body?.title ?? '').trim();
+    if (!NAME_RE.test(code)) return res.status(400).json({ error: '名字只能是 1-32 位英文字母或数字' });
+    // An expired name may still be on disk until the next sweep; reclaim it now.
+    const prev = q.collection.get(code);
+    if (prev && expiresAt(prev) > Date.now()) return res.status(409).json({ error: '名字已被占用' });
+    if (prev) purge(code);
+    q.insertCollection.run(code, code, req.uid, Date.now());
     res.json({ code });
   });
 

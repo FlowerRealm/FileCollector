@@ -59,7 +59,7 @@ test('submit overwrites; owner sees only the latest per user', async () => {
   const alice = client();
   const bob = client();
 
-  const { code } = await (await owner('/api/collections', json({ title: 'hw' }))).json();
+  const { code } = await (await owner('/api/collections', json({ title: 'hw1' }))).json();
 
   assert.equal((await alice(`/api/collections/${code}`)).status, 200);
   assert.equal((await alice(`/api/collections/${code}/submit`, form('Alice', { 'a.txt': 'v1', 'dir/b.txt': 'b' }))).status, 200);
@@ -91,7 +91,7 @@ test('submit overwrites; owner sees only the latest per user', async () => {
 test('non-owner cannot manage; owner can delete', async () => {
   const owner = client();
   const alice = client();
-  const { code } = await (await owner('/api/collections', json({ title: 't' }))).json();
+  const { code } = await (await owner('/api/collections', json({ title: 'perm' }))).json();
   await alice(`/api/collections/${code}/submit`, form('Alice', { 'a.txt': 'x' }));
 
   assert.equal((await alice(`/api/collections/${code}/submissions`)).status, 403);
@@ -106,7 +106,7 @@ test('non-owner cannot manage; owner can delete', async () => {
 
 test('bad input is rejected and leaves no residue', async () => {
   const owner = client();
-  const { code } = await (await owner('/api/collections', json({ title: 't' }))).json();
+  const { code } = await (await owner('/api/collections', json({ title: 'bad' }))).json();
 
   assert.equal((await owner(`/api/collections/${code}/submit`, form('A', { '../evil.txt': 'x' }))).status, 400);
   assert.equal((await owner(`/api/collections/${code}/submit`, form('', { 'a.txt': 'x' }))).status, 400);
@@ -114,10 +114,20 @@ test('bad input is rejected and leaves no residue', async () => {
   assert.equal((await owner('/api/collections/aaaaaaaa')).status, 404);
   assert.equal((await owner('/api/collections/ABCDEFGH')).status, 404);
   assert.equal((await owner('/api/collections/a%2Fb%2Fc%2Fd')).status, 404);
-  assert.equal((await owner('/api/collections', json({ title: '  ' }))).status, 400);
+  for (const title of ['  ', 'a b', '作业', 'a-b', 'x'.repeat(33)]) {
+    assert.equal((await owner('/api/collections', json({ title }))).status, 400, title);
+  }
 
   assert.equal(fs.readdirSync(path.join(dataDir, 'tmp')).length, 0);
   assert.equal((await (await owner(`/api/collections/${code}`)).json()).mine, null);
+});
+
+test('name is the link and must be unique', async () => {
+  const owner = client();
+  const { code } = await (await owner('/api/collections', json({ title: 'Hw2024' }))).json();
+  assert.equal(code, 'Hw2024');
+  assert.equal((await (await client()(`/api/collections/Hw2024`)).json()).title, 'Hw2024');
+  assert.equal((await client()('/api/collections', json({ title: 'Hw2024' }))).status, 409);
 });
 
 test('forged cookie is replaced, not trusted', async () => {
@@ -134,19 +144,27 @@ test('expired collections are unreachable and swept from disk', async () => {
   try {
     const cookie = 'uid=' + 'a'.repeat(64);
     const call = (p, o = {}) => fetch(url + p, { ...o, headers: { ...o.headers, cookie } });
-    const { code } = await (await call('/api/collections', json({ title: 't' }))).json();
-    assert.equal((await call(`/api/collections/${code}/submit`, form('A', { 'a.txt': 'x' }))).status, 200);
-    const info = await (await call(`/api/collections/${code}`)).json();
+    for (const title of ['t', 'u']) {
+      assert.equal((await call('/api/collections', json({ title }))).status, 200);
+      assert.equal((await call(`/api/collections/${title}/submit`, form('A', { 'a.txt': 'x' }))).status, 200);
+    }
+    const info = await (await call('/api/collections/t')).json();
     assert.ok(info.expiresAt > Date.now());
-    assert.equal((await (await call('/api/collections')).json()).length, 1);
+    assert.equal((await (await call('/api/collections')).json()).length, 2);
 
     await new Promise((r) => setTimeout(r, 200));
-    assert.equal((await call(`/api/collections/${code}`)).status, 404);
+    assert.equal((await call('/api/collections/t')).status, 404);
     assert.equal((await (await call('/api/collections')).json()).length, 0);
-    assert.ok(fs.existsSync(path.join(dir, 'files', code)));
+    assert.ok(fs.existsSync(path.join(dir, 'files', 't')));
 
+    // An expired name not yet swept is reclaimed on create, with its old files.
+    assert.equal((await call('/api/collections', json({ title: 't' }))).status, 200);
+    assert.equal(fs.existsSync(path.join(dir, 'files', 't')), false);
+    assert.equal((await (await call('/api/collections/t')).json()).mine, null);
+
+    assert.ok(fs.existsSync(path.join(dir, 'files', 'u')));
     app.sweep();
-    assert.equal(fs.existsSync(path.join(dir, 'files', code)), false);
+    assert.equal(fs.existsSync(path.join(dir, 'files', 'u')), false);
   } finally {
     srv.close();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -156,7 +174,7 @@ test('expired collections are unreachable and swept from disk', async () => {
 test('owner can close and reopen; closed rejects submissions', async () => {
   const owner = client();
   const alice = client();
-  const { code } = await (await owner('/api/collections', json({ title: 't' }))).json();
+  const { code } = await (await owner('/api/collections', json({ title: 'closeme' }))).json();
   assert.equal((await alice(`/api/collections/${code}/submit`, form('A', { 'a.txt': '1' }))).status, 200);
 
   assert.equal((await alice(`/api/collections/${code}/closed`, json({ closed: true }))).status, 403);

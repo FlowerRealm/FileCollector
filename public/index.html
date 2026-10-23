@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>文件收集</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -16,12 +17,12 @@
   <div class="grid2">
     <form class="card" id="create">
       <h2>发起</h2>
-      <input type="text" id="title" placeholder="标题" aria-label="标题" maxlength="100" required>
+      <input type="text" id="title" placeholder="名字（英文或数字）" aria-label="名字" maxlength="32" pattern="[A-Za-z0-9]+" title="只能是英文字母或数字，无空格" required autocomplete="off">
       <button class="btn primary block" id="createBtn">创建</button>
     </form>
     <form class="card" id="join">
       <h2>加入</h2>
-      <input type="text" id="code" placeholder="链接或收集码" aria-label="链接或收集码" required autocomplete="off">
+      <input type="text" id="code" placeholder="链接或名字" aria-label="链接或名字" required autocomplete="off">
       <button class="btn block">加入</button>
     </form>
   </div>
@@ -54,9 +55,9 @@ $('create').onsubmit = async (e) => {
 
 $('join').onsubmit = (e) => {
   e.preventDefault();
-  const m = $('code').value.toLowerCase().match(/[a-z2-7]{8}(?![a-z2-7])/);
-  if (!m) return toast('收集码无效', 'bad');
-  location.href = '/c/' + m[0];
+  const m = $('code').value.trim().match(/(?:^|\/c\/)([A-Za-z0-9]{1,32})\/?$/);
+  if (!m) return toast('链接或名字无效', 'bad');
+  location.href = '/c/' + m[1];
 };
 
 const items = await (await fetch('/api/collections')).json();
