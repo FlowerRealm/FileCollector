@@ -205,3 +205,27 @@ test('database without the closed column is migrated', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Entry names from a zip's central directory.
+function zipNames(buf) {
+  const names = [];
+  for (let i = buf.indexOf(Buffer.from('PK\x01\x02')); i >= 0; i = buf.indexOf(Buffer.from('PK\x01\x02'), i + 46)) {
+    names.push(buf.toString('utf8', i + 46, i + 46 + buf.readUInt16LE(i + 28)));
+  }
+  return names.sort();
+}
+
+test('download zips submitted paths as-is; clashes get a numbered name', async () => {
+  const owner = client();
+  const { code } = await (await owner('/api/collections', json({ title: 'flat' }))).json();
+  await client()(`/api/collections/${code}/submit`, form('Alice', { 'a.txt': '1', 'dir/b.txt': '2' }));
+  const bob = client();
+  await bob(`/api/collections/${code}/submit`, form('Bob', { 'a.txt': '3' }));
+
+  const all = Buffer.from(await (await owner(`/api/collections/${code}/download`)).arrayBuffer());
+  assert.deepEqual(zipNames(all), ['a (2).txt', 'a.txt', 'dir/b.txt']);
+
+  const [b] = (await (await owner(`/api/collections/${code}/submissions`)).json()).filter((s) => s.name === 'Bob');
+  const one = Buffer.from(await (await owner(`/api/collections/${code}/download?sid=${b.sid}`)).arrayBuffer());
+  assert.deepEqual(zipNames(one), ['a.txt']);
+});

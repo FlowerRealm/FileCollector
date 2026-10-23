@@ -282,7 +282,8 @@ export function createApp({ dataDir, maxFileMB = 500, maxFiles = 5000, ttlMs = 3
     res.download(path.join(subDir(req.collection.code, s.sid), p), path.basename(p));
   });
 
-  // One submission with ?sid=, or everything. Entries are prefixed by submitter name.
+  // One submission with ?sid=, or everything. Entries keep the submitted paths as-is;
+  // when two submitters sent the same path, later ones become "name (2).ext".
   app.get('/api/collections/:code/download', ownerOnly, (req, res) => {
     const { code, title } = req.collection;
     const subs = req.query.sid
@@ -294,10 +295,17 @@ export function createApp({ dataDir, maxFileMB = 500, maxFiles = 5000, ttlMs = 3
     res.attachment(`${req.query.sid ? subs[0].name : title}.zip`);
     zip.on('error', () => res.destroy());
     zip.pipe(res);
+    const taken = new Set();
+    const unique = (p) => {
+      const ext = path.posix.extname(p);
+      let name = p;
+      for (let i = 2; taken.has(name); i++) name = `${p.slice(0, p.length - ext.length)} (${i})${ext}`;
+      taken.add(name);
+      return name;
+    };
     for (const s of subs) {
-      const prefix = `${s.name.replaceAll(/[\\/]/g, '_')}-${s.sid.slice(0, 4)}`;
       for (const f of q.filesOf.all(s.sid)) {
-        zip.file(path.join(subDir(code, s.sid), f.path), { name: `${prefix}/${f.path}` });
+        zip.file(path.join(subDir(code, s.sid), f.path), { name: unique(f.path) });
       }
     }
     zip.finalize();
