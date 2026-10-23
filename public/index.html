@@ -33,7 +33,7 @@
   </section>
 </main>
 <script type="module">
-import { $, h, icon, brand, fmtRemaining, isUrgent, toast } from '/ui.js';
+import { $, h, icon, brand, toast } from '/ui.js';
 
 $('top').append(brand());
 
@@ -65,13 +65,11 @@ if (items.length) {
   $('recent').hidden = false;
   $('list').append(
     ...items.map((c) => {
-      const left = c.expiresAt - Date.now();
       return h('a', { className: 'row-link', href: '/c/' + c.code },
         h('div', { className: 'grow' },
           h('div', { className: 'name' }, c.title),
           h('div', { className: 'chips', style: 'margin-top:4px' },
-            h('span', { className: `chip ${c.isOwner ? 'accent' : ''}` }, c.isOwner ? '我发起的' : '我加入的'),
-            h('span', { className: `chip ${isUrgent(left) ? 'warn' : ''}` }, icon('clock', 13), fmtRemaining(left)))),
+            h('span', { className: `chip ${c.isOwner ? 'accent' : ''}` }, c.isOwner ? '我发起的' : '我加入的'))),
         h('span', { className: 'go' }, icon('arrow')));
     }),
   );

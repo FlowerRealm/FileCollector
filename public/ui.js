@@ -43,19 +43,6 @@ export const fmtSize = (n) =>
 export const fmtTime = (t) =>
   new Date(t).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-export function fmtRemaining(ms) {
-  if (ms <= 0) return '已过期';
-  const m = Math.floor(ms / 60000);
-  const d = Math.floor(m / 1440);
-  const hr = Math.floor((m % 1440) / 60);
-  if (d) return `剩余 ${d} 天 ${hr} 小时`;
-  if (hr) return `剩余 ${hr} 小时 ${m % 60} 分`;
-  return `剩余 ${Math.max(m, 1)} 分钟`;
-}
-
-// Expiring in under 6 hours turns the chip amber.
-export const isUrgent = (ms) => ms < 6 * 3600 * 1000;
-
 export const avatar = (name) => h('span', { className: 'avatar' }, [...name][0]?.toUpperCase() ?? '?');
 
 // kind: 'ok' | 'bad'

@@ -11,7 +11,7 @@
 <header class="top" id="top"></header>
 <main class="wrap" id="root"></main>
 <script type="module">
-import { $, h, icon, brand, avatar, fmtSize, fmtTime, fmtRemaining, isUrgent, toast, copyText } from '/ui.js';
+import { $, h, icon, brand, avatar, fmtSize, fmtTime, toast, copyText } from '/ui.js';
 
 const code = location.pathname.split('/')[2];
 const api = '/api/collections/' + code;
@@ -219,19 +219,12 @@ async function loadAdmin() {
 
 let info;
 
-function renderRemaining() {
-  const left = info.expiresAt - Date.now();
-  els.remain.className = `chip ${isUrgent(left) ? 'warn' : ''}`;
-  els.remain.replaceChildren(icon('clock', 13), fmtRemaining(left));
-}
-
 async function load() {
   const r = await fetch(api);
   if (!r.ok) {
     return $('root').replaceChildren(
       h('div', { className: 'empty' },
-        h('h1', {}, '这个收集不存在或已过期'),
-        h('p', {}, '收集到期后，所有提交的文件都会被自动清理。'),
+        h('h1', {}, '这个收集不存在'),
         h('a', { className: 'btn primary', href: '/' }, '回到首页')));
   }
   info = await r.json();
@@ -240,8 +233,8 @@ async function load() {
   els.role.className = `chip ${info.isOwner ? 'accent' : ''}`;
   els.role.textContent = info.isOwner ? '你是管理者' : '参与者';
   els.link.textContent = location.href;
-  renderRemaining();
-  els.state.hidden = !info.closed;
+  els.state.className = `chip ${info.closed ? '' : 'ok'}`;
+  els.state.textContent = info.closed ? '已关闭' : '开放中';
   els.closeBtn.hidden = !info.isOwner;
   els.closeBtn.textContent = info.closed ? '重新开放' : '关闭收集';
   els.body.hidden = info.closed;
@@ -256,8 +249,7 @@ async function load() {
 Object.assign(els, {
   title: h('h1'),
   role: h('span'),
-  remain: h('span'),
-  state: h('span', { className: 'chip', hidden: true }, '已关闭'),
+  state: h('span', { className: 'chip' }),
   closeBtn: h('button', { className: 'btn sm', hidden: true, onclick: toggleClosed }),
   link: h('code'),
   admin: h('section', { className: 'card', hidden: true }),
@@ -283,14 +275,13 @@ const copy = h('button', {
 $('root').append(
   h('div', { className: 'stack' },
     h('section', { className: 'head' },
-      h('div', { className: 'chips' }, els.role, els.remain, els.state, els.closeBtn),
+      h('div', { className: 'chips' }, els.role, els.state, els.closeBtn),
       els.title,
       h('div', { className: 'share' }, icon('link', 16), els.link, copy)),
     buildSubmitCard(),
     els.admin));
 
 await load();
-setInterval(() => info && renderRemaining(), 60000);
 </script>
 </body>
 </html>

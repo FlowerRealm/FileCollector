@@ -72,7 +72,7 @@ export function createApp({ dataDir, maxFileMB = 500, maxFiles = 5000, ttlMs = 3
     setClosed: db.prepare('UPDATE collections SET closed = ? WHERE code = ?'),
     join: db.prepare('INSERT OR IGNORE INTO members VALUES (?, ?)'),
     mine: db.prepare(`
-      SELECT c.code, c.title, c.owner = ?1 AS is_owner FROM collections c
+      SELECT c.code, c.title, c.created_at, c.owner = ?1 AS is_owner FROM collections c
       WHERE (c.owner = ?1 OR c.code IN (SELECT code FROM members WHERE uid = ?1)) AND c.created_at > ?2
       ORDER BY c.created_at DESC`),
     expired: db.prepare('SELECT code FROM collections WHERE created_at <= ?'),
