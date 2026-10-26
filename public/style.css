@@ -281,3 +281,8 @@ input[type=text]:focus { outline: 0; border-color: var(--accent); box-shadow: 0 
   .sub .ops { width: 100%; justify-content: flex-end; }
 }
 @media (prefers-reduced-motion: reduce) { body::before { animation: none; } * { transition: none !important; animation: none !important; } }
+
+/* kind switch */
+.seg { display: inline-flex; gap: 4px; padding: 4px; margin-top: 22px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line); }
+.seg button { font: inherit; font-size: 14px; font-weight: 550; padding: 6px 18px; border: 0; border-radius: 9px; background: none; color: var(--ink-2); cursor: pointer; }
+.seg button[aria-selected=true] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow), var(--glass-hi); }

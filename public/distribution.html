@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文件分发</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top" id="top"></header>
+<main class="wrap" id="root"></main>
+<script type="module">
+import { $, h, icon, brand, fmtSize, toast, copyText, fileList, sumSize, picker, send } from '/ui.js';
+
+const code = location.pathname.split('/')[2];
+const api = '/api/distributions/' + code;
+const enc = (p) => p.split('/').map(encodeURIComponent).join('/');
+const pending = new Map(); // relative path -> File
+
+$('top').append(
+  brand('文件分发'),
+  h('a', { className: 'back', href: '/' }, icon('back', 16), '首页'),
+);
+
+// ---- upload card (owner only) ----
+
+const els = {
+  title: h('h1'),
+  role: h('span'),
+  state: h('span', { className: 'chip' }),
+  closeBtn: h('button', { className: 'btn sm', hidden: true, onclick: toggleClosed }),
+  link: h('code'),
+  pend: h('div', { className: 'pend', hidden: true }),
+  upload: h('button', { className: 'btn primary block', disabled: true, style: 'margin-top:18px' }, icon('upload', 16), '上传'),
+  bar: h('div', { className: 'bar', hidden: true }, h('i')),
+  err: h('div', { className: 'err' }),
+  files: h('section', { className: 'card' }),
+};
+els.uploader = h('form', { className: 'card', hidden: true, onsubmit: onUpload },
+  h('div', { className: 'card-head' }, h('h2', {}, '上传文件')),
+  picker((entries) => {
+    for (const [p, f] of entries) pending.set(p, f);
+    renderPending();
+  }),
+  els.pend, els.upload, els.bar, els.err,
+  h('p', { className: 'hint' }, '同名路径的文件会被替换'));
+
+function renderPending() {
+  const files = [...pending].map(([path, f]) => ({ path, size: f.size }));
+  els.pend.hidden = !files.length;
+  els.upload.disabled = !files.length;
+  els.pend.replaceChildren(
+    h('div', { className: 'pend-head' },
+      h('span', {}, `已选 ${files.length} 个文件 · ${fmtSize(sumSize(files))}`),
+      h('button', { type: 'button', className: 'btn ghost sm', onclick: () => { pending.clear(); renderPending(); } }, '清空')),
+    fileList(files, { onRemove: (f) => { pending.delete(f.path); renderPending(); } }));
+}
+
+async function onUpload(e) {
+  e.preventDefault();
+  const fd = new FormData();
+  for (const [path, f] of pending) {
+    fd.append('paths', path);
+    fd.append('files', f);
+  }
+  els.err.textContent = '';
+  els.upload.disabled = true;
+  const { error } = await send(api + '/files', fd, els.bar);
+  if (error) {
+    els.upload.disabled = false;
+    return (els.err.textContent = error);
+  }
+  pending.clear();
+  renderPending();
+  toast('上传成功');
+  load();
+}
+
+// ---- files card ----
+
+async function removeFile(f) {
+  const r = await fetch(`${api}/files/${enc(f.path)}`, { method: 'DELETE' });
+  if (!r.ok) return toast('删除失败', 'bad');
+  toast('已删除');
+  load();
+}
+
+function renderFiles(info) {
+  const { files } = info;
+  const body = info.closed && !info.isOwner
+    ? h('div', { className: 'muted', style: 'text-align:center;padding:24px 0' }, '分发已关闭')
+    : files.length
+      ? fileList(files, { plain: true, hrefOf: (f) => `${api}/files/${enc(f.path)}`, onRemove: info.isOwner && removeFile })
+      : h('div', { className: 'muted', style: 'text-align:center;padding:20px 0' }, '还没有文件');
+  els.files.replaceChildren(
+    h('div', { className: 'card-head' },
+      h('div', {},
+        h('h2', {}, '文件'),
+        files.length > 0 && h('div', { className: 'muted' }, `${files.length} 个文件 · ${fmtSize(sumSize(files))}`)),
+      files.length > 0 && h('a', { className: 'btn sm primary', href: api + '/download' }, icon('download', 14), '全部下载 .zip')),
+    body);
+}
+
+// ---- page ----
+
+let info;
+
+async function load() {
+  const r = await fetch(api);
+  if (!r.ok) {
+    return $('root').replaceChildren(
+      h('div', { className: 'empty' },
+        h('h1', {}, '这个分发不存在'),
+        h('a', { className: 'btn primary', href: '/' }, '回到首页')));
+  }
+  info = await r.json();
+  document.title = info.code;
+  els.title.textContent = info.code;
+  els.role.className = `chip ${info.isOwner ? 'accent' : ''}`;
+  els.role.textContent = info.isOwner ? '你是管理者' : '接收者';
+  els.link.textContent = location.href;
+  els.state.className = `chip ${info.closed ? '' : 'ok'}`;
+  els.state.textContent = info.closed ? '已关闭' : '开放中';
+  els.closeBtn.hidden = !info.isOwner;
+  els.closeBtn.textContent = info.closed ? '重新开放' : '关闭分发';
+  els.uploader.hidden = !info.isOwner;
+  renderFiles(info);
+}
+
+async function toggleClosed() {
+  const r = await fetch(api + '/closed', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ closed: !info.closed }),
+  });
+  if (!r.ok) return toast('操作失败', 'bad');
+  await load();
+}
+
+const copy = h('button', {
+  className: 'btn sm primary',
+  onclick: async () => {
+    if (await copyText(location.href)) toast('链接已复制');
+    else toast('复制失败，请手动复制', 'bad');
+  },
+}, icon('copy', 14), '复制');
+
+$('root').append(
+  h('div', { className: 'stack' },
+    h('section', { className: 'head' },
+      h('div', { className: 'chips' }, els.role, els.state, els.closeBtn),
+      els.title,
+      h('div', { className: 'share' }, icon('link', 16), els.link, copy)),
+    els.files,
+    els.uploader));
+
+await load();
+</script>
+</body>
+</html>

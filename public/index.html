@@ -11,7 +11,11 @@
 <header class="top" id="top"></header>
 <main class="wrap">
   <section class="hero">
-    <h1>收集<em>文件</em></h1>
+    <h1><span id="verb">收集</span><em>文件</em></h1>
+    <div class="seg" id="mode" role="tablist">
+      <button type="button" role="tab" data-kind="c">收集</button>
+      <button type="button" role="tab" data-kind="d">分发</button>
+    </div>
   </section>
 
   <div class="grid2">
@@ -28,19 +32,38 @@
   </div>
 
   <section id="recent" hidden>
-    <div class="section-title"><h2>我的收集</h2></div>
+    <div class="section-title"><h2>最近</h2></div>
     <div class="rows" id="list"></div>
   </section>
 </main>
 <script type="module">
 import { $, h, icon, brand, toast } from '/ui.js';
 
-$('top').append(brand());
+const top = brand();
+$('top').append(top);
+
+// c = collection, d = distribution; same name rules, separate namespaces.
+const KINDS = {
+  c: { verb: '收集', api: '/api/collections' },
+  d: { verb: '分发', api: '/api/distributions' },
+};
+let kind = 'c';
+try { if (localStorage.getItem('kind') === 'd') kind = 'd'; } catch {}
+
+function setKind(k) {
+  kind = k;
+  try { localStorage.setItem('kind', k); } catch {}
+  $('verb').textContent = KINDS[k].verb;
+  document.title = top.lastChild.textContent = `文件${KINDS[k].verb}`;
+  for (const b of $('mode').children) b.setAttribute('aria-selected', b.dataset.kind === k);
+}
+$('mode').onclick = (e) => e.target.dataset.kind && setKind(e.target.dataset.kind);
+setKind(kind);
 
 $('create').onsubmit = async (e) => {
   e.preventDefault();
   $('createBtn').disabled = true;
-  const r = await fetch('/api/collections', {
+  const r = await fetch(KINDS[kind].api, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title: $('title').value }),
@@ -50,26 +73,33 @@ $('create').onsubmit = async (e) => {
     $('createBtn').disabled = false;
     return toast(j.error, 'bad');
   }
-  location.href = '/c/' + j.code;
+  location.href = `/${kind}/${j.code}`;
 };
 
+// A pasted link carries its own kind; a bare name uses the selected one.
 $('join').onsubmit = (e) => {
   e.preventDefault();
-  const m = $('code').value.trim().match(/(?:^|\/c\/)([A-Za-z0-9]{1,32})\/?$/);
+  const m = $('code').value.trim().match(/(?:^|\/([cd])\/)([A-Za-z0-9]{1,32})\/?$/);
   if (!m) return toast('链接或名字无效', 'bad');
-  location.href = '/c/' + m[1];
+  location.href = `/${m[1] ?? kind}/${m[2]}`;
 };
 
-const items = await (await fetch('/api/collections')).json();
+const [cs, ds] = await Promise.all(Object.values(KINDS).map(async ({ api }) => (await fetch(api)).json()));
+const items = [
+  ...cs.map((c) => ({ ...c, kind: 'c' })),
+  ...ds.map((d) => ({ ...d, kind: 'd' })),
+].sort((a, b) => b.expiresAt - a.expiresAt);
 if (items.length) {
   $('recent').hidden = false;
   $('list').append(
     ...items.map((c) => {
-      return h('a', { className: 'row-link', href: '/c/' + c.code },
+      const role = c.isOwner ? '我发起的' : c.kind === 'c' ? '我加入的' : '我收到的';
+      return h('a', { className: 'row-link', href: `/${c.kind}/${c.code}` },
         h('div', { className: 'grow' },
-          h('div', { className: 'name' }, c.title),
+          h('div', { className: 'name' }, c.code),
           h('div', { className: 'chips', style: 'margin-top:4px' },
-            h('span', { className: `chip ${c.isOwner ? 'accent' : ''}` }, c.isOwner ? '我发起的' : '我加入的'))),
+            h('span', { className: 'chip' }, KINDS[c.kind].verb),
+            h('span', { className: `chip ${c.isOwner ? 'accent' : ''}` }, role))),
         h('span', { className: 'go' }, icon('arrow')));
     }),
   );

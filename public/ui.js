@@ -72,11 +72,92 @@ export async function copyText(text) {
   }
 }
 
-export function brand() {
+export function brand(label = '文件收集') {
   return h(
     'a',
     { className: 'brand', href: '/' },
     h('span', { className: 'logo' }, icon('layers', 16)),
-    '文件收集',
+    h('span', {}, label),
   );
+}
+
+export const sumSize = (files) => files.reduce((n, f) => n + f.size, 0);
+
+export function fileList(files, { hrefOf, onRemove, plain } = {}) {
+  return h('ul', { className: `flist ${plain ? 'plain' : ''}` },
+    files.map((f) =>
+      h('li', {},
+        icon('file', 15),
+        h(hrefOf ? 'a' : 'span', { className: 'p', title: f.path, ...(hrefOf && { href: hrefOf(f) }) }, f.path),
+        h('span', { className: 'sz' }, fmtSize(f.size)),
+        onRemove && h('button', { type: 'button', title: '移除', onclick: () => onRemove(f) }, icon('x', 14)))));
+}
+
+async function walk(entry, prefix = '') {
+  if (entry.isFile) return [[prefix + entry.name, await new Promise((res, rej) => entry.file(res, rej))]];
+  const reader = entry.createReader();
+  const out = [];
+  for (let batch; (batch = await new Promise((res, rej) => reader.readEntries(res, rej))).length; ) {
+    for (const e of batch) out.push(...(await walk(e, `${prefix}${entry.name}/`)));
+  }
+  return out;
+}
+
+// Drop zone with file/folder buttons. onAdd receives [[relativePath, File], ...].
+export function picker(onAdd) {
+  const input = (props) => h('input', {
+    type: 'file', hidden: true, ...props,
+    onchange: (e) => {
+      onAdd([...e.target.files].map((f) => [f.webkitRelativePath || f.name, f]));
+      e.target.value = '';
+    },
+  });
+  const files = input({ multiple: true });
+  const dir = input({ webkitdirectory: true });
+  const drop = h('div', { className: 'drop' },
+    h('span', { className: 'big' }, icon('upload', 28)),
+    h('div', {}, h('strong', {}, '把文件或文件夹拖到这里')),
+    h('div', { className: 'muted' }, '或者'),
+    h('div', { className: 'btns' },
+      h('button', { type: 'button', className: 'btn sm', onclick: () => files.click() }, icon('file', 15), '选择文件'),
+      h('button', { type: 'button', className: 'btn sm', onclick: () => dir.click() }, icon('folder', 15), '选择文件夹')),
+    files, dir);
+
+  for (const ev of ['dragenter', 'dragover']) drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', (e) => { if (!drop.contains(e.relatedTarget)) drop.classList.remove('over'); });
+  drop.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    drop.classList.remove('over');
+    // Entries must be grabbed synchronously; the DataTransfer is cleared after the first await.
+    const entries = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+    const out = [];
+    try {
+      for (const entry of entries) out.push(...(await walk(entry)));
+    } catch {
+      toast('读取文件夹失败', 'bad');
+    }
+    onAdd(out);
+  });
+  return drop;
+}
+
+// POST with upload progress drawn into a .bar (fetch cannot report upload progress).
+// Resolves to the JSON body, or { error } on failure.
+export function send(url, fd, bar) {
+  const fill = bar.firstChild;
+  bar.hidden = false;
+  fill.style.width = '0';
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.upload.onprogress = (ev) => { fill.style.width = `${(ev.loaded / ev.total) * 100}%`; };
+    xhr.onerror = () => { bar.hidden = true; resolve({ error: '网络错误' }); };
+    xhr.onload = () => {
+      bar.hidden = true;
+      let body = {};
+      try { body = JSON.parse(xhr.responseText); } catch {}
+      resolve(xhr.status === 200 ? body : { error: body.error || '上传失败' });
+    };
+    xhr.send(fd);
+  });
 }

@@ -229,3 +229,84 @@ test('download zips submitted paths as-is; clashes get a numbered name', async (
   const one = Buffer.from(await (await owner(`/api/collections/${code}/download?sid=${b.sid}`)).arrayBuffer());
   assert.deepEqual(zipNames(one), ['a.txt']);
 });
+
+test('distribution: owner uploads, anyone with the link downloads', async () => {
+  const owner = client();
+  const alice = client();
+  const { code } = await (await owner('/api/distributions', json({ title: 'slides' }))).json();
+  assert.equal(code, 'slides');
+  assert.equal((await client()('/api/distributions', json({ title: 'slides' }))).status, 409);
+  assert.equal((await owner('/api/distributions', json({ title: 'a b' }))).status, 400);
+
+  // A distribution and a collection may share a name: they live at /d/ and /c/.
+  assert.equal((await owner('/api/collections', json({ title: 'slides' }))).status, 200);
+
+  assert.equal((await owner(`/api/distributions/${code}/files`, form('', { 'a.txt': '1', 'dir/b.txt': '2' }))).status, 200);
+  assert.equal((await alice(`/api/distributions/${code}/files`, form('', { 'x.txt': 'x' }))).status, 403);
+  assert.equal((await owner(`/api/distributions/${code}/files`, form('', { '../x': 'x' }))).status, 400);
+
+  // Same path replaces; the old blob is removed from disk.
+  const res = await (await owner(`/api/distributions/${code}/files`, form('', { 'a.txt': 'new' }))).json();
+  assert.deepEqual(res.files.map((f) => f.path), ['a.txt', 'dir/b.txt']);
+  assert.equal(fs.readdirSync(path.join(dataDir, 'dist', code)).length, 2);
+
+  const info = await (await alice(`/api/distributions/${code}`)).json();
+  assert.equal(info.isOwner, false);
+  assert.deepEqual(info.files.map((f) => f.path), ['a.txt', 'dir/b.txt']);
+  assert.equal(await (await alice(`/api/distributions/${code}/files/a.txt`)).text(), 'new');
+  const zip = Buffer.from(await (await alice(`/api/distributions/${code}/download`)).arrayBuffer());
+  assert.deepEqual(zipNames(zip), ['a.txt', 'dir/b.txt']);
+
+  // Opening the link lists it on the home page.
+  const mine = await (await alice('/api/distributions')).json();
+  assert.deepEqual(mine.map((d) => [d.code, d.isOwner]), [[code, false]]);
+
+  assert.equal((await alice(`/api/distributions/${code}/files/a.txt`, { method: 'DELETE' })).status, 403);
+  assert.equal((await owner(`/api/distributions/${code}/files/dir/b.txt`, { method: 'DELETE' })).status, 200);
+  assert.equal(fs.readdirSync(path.join(dataDir, 'dist', code)).length, 1);
+  assert.equal((await alice(`/api/distributions/${code}/files/dir/b.txt`)).status, 404);
+});
+
+test('closed distribution hides files from everyone but the owner', async () => {
+  const owner = client();
+  const alice = client();
+  const { code } = await (await owner('/api/distributions', json({ title: 'shut' }))).json();
+  await owner(`/api/distributions/${code}/files`, form('', { 'a.txt': '1' }));
+
+  assert.equal((await alice(`/api/distributions/${code}/closed`, json({ closed: true }))).status, 403);
+  assert.equal((await owner(`/api/distributions/${code}/closed`, json({ closed: true }))).status, 200);
+
+  const info = await (await alice(`/api/distributions/${code}`)).json();
+  assert.equal(info.closed, true);
+  assert.deepEqual(info.files, []);
+  assert.equal((await alice(`/api/distributions/${code}/files/a.txt`)).status, 403);
+  assert.equal((await alice(`/api/distributions/${code}/download`)).status, 403);
+  assert.equal((await owner(`/api/distributions/${code}/files/a.txt`)).status, 200);
+
+  await owner(`/api/distributions/${code}/closed`, json({ closed: false }));
+  assert.equal((await alice(`/api/distributions/${code}/files/a.txt`)).status, 200);
+});
+
+test('expired distributions are unreachable and swept from disk', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'collector-dttl-'));
+  const app = createApp({ dataDir: dir, ttlMs: 150 });
+  const srv = app.listen(0);
+  await new Promise((r) => srv.once('listening', r));
+  const url = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    const cookie = 'uid=' + 'b'.repeat(64);
+    const call = (p, o = {}) => fetch(url + p, { ...o, headers: { ...o.headers, cookie } });
+    assert.equal((await call('/api/distributions', json({ title: 'd' }))).status, 200);
+    assert.equal((await call('/api/distributions/d/files', form('', { 'a.txt': 'x' }))).status, 200);
+
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal((await call('/api/distributions/d')).status, 404);
+    assert.equal((await (await call('/api/distributions')).json()).length, 0);
+    app.sweep();
+    assert.equal(fs.existsSync(path.join(dir, 'dist', 'd')), false);
+    assert.equal((await call('/api/distributions', json({ title: 'd' }))).status, 200);
+  } finally {
+    srv.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

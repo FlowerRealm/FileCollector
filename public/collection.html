@@ -11,7 +11,7 @@
 <header class="top" id="top"></header>
 <main class="wrap" id="root"></main>
 <script type="module">
-import { $, h, icon, brand, avatar, fmtSize, fmtTime, toast, copyText } from '/ui.js';
+import { $, h, icon, brand, avatar, fmtSize, fmtTime, toast, copyText, fileList, sumSize, picker, send } from '/ui.js';
 
 const code = location.pathname.split('/')[2];
 const api = '/api/collections/' + code;
@@ -23,32 +23,11 @@ $('top').append(
   h('a', { className: 'back', href: '/' }, icon('back', 16), '首页'),
 );
 
-function fileList(files, { hrefOf, onRemove, plain } = {}) {
-  return h('ul', { className: `flist ${plain ? 'plain' : ''}` },
-    files.map((f) =>
-      h('li', {},
-        icon('file', 15),
-        h(hrefOf ? 'a' : 'span', { className: 'p', title: f.path, ...(hrefOf && { href: hrefOf(f) }) }, f.path),
-        h('span', { className: 'sz' }, fmtSize(f.size)),
-        onRemove && h('button', { type: 'button', title: '移除', onclick: () => onRemove(f) }, icon('x', 14)))));
-}
-
-const sumSize = (files) => files.reduce((n, f) => n + f.size, 0);
-
 // ---- submit card ----
 
 const els = {};
 function buildSubmitCard() {
   els.mine = h('div', { hidden: true });
-  els.pickFiles = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => pick(els.pickFiles) });
-  els.pickDir = h('input', { type: 'file', webkitdirectory: true, hidden: true, onchange: () => pick(els.pickDir) });
-  els.drop = h('div', { className: 'drop' },
-    h('span', { className: 'big' }, icon('upload', 28)),
-    h('div', {}, h('strong', {}, '把文件或文件夹拖到这里')),
-    h('div', { className: 'muted' }, '或者'),
-    h('div', { className: 'btns' },
-      h('button', { type: 'button', className: 'btn sm', onclick: () => els.pickFiles.click() }, icon('file', 15), '选择文件'),
-      h('button', { type: 'button', className: 'btn sm', onclick: () => els.pickDir.click() }, icon('folder', 15), '选择文件夹')));
   els.pend = h('div', { className: 'pend', hidden: true });
   els.name = h('input', { type: 'text', placeholder: '管理者靠它认出你', maxLength: 50, required: true });
   els.submit = h('button', { className: 'btn primary block', disabled: true }, icon('upload', 16), '提交');
@@ -56,14 +35,10 @@ function buildSubmitCard() {
   els.err = h('div', { className: 'err' });
   els.closedMsg = h('div', { className: 'muted', hidden: true, style: 'text-align:center;padding:24px 0' }, '收集已关闭');
   els.body = h('div', {},
-    els.drop, els.pickFiles, els.pickDir, els.pend,
+    picker(addPending), els.pend,
     h('label', { className: 'field', style: 'margin-top:18px' }, h('span', {}, '你的姓名'), els.name),
     els.submit, els.bar, els.err,
     h('p', { className: 'hint' }, '再次提交会覆盖你之前的提交'));
-
-  for (const ev of ['dragenter', 'dragover']) els.drop.addEventListener(ev, (e) => { e.preventDefault(); els.drop.classList.add('over'); });
-  els.drop.addEventListener('dragleave', (e) => { if (!els.drop.contains(e.relatedTarget)) els.drop.classList.remove('over'); });
-  els.drop.addEventListener('drop', onDrop);
 
   return h('form', { className: 'card', onsubmit: onSubmit },
     h('div', { className: 'card-head' }, h('h2', {}, '提交文件')),
@@ -72,32 +47,8 @@ function buildSubmitCard() {
     els.body);
 }
 
-function pick(input) {
-  for (const f of input.files) pending.set(f.webkitRelativePath || f.name, f);
-  input.value = '';
-  renderPending();
-}
-
-async function walk(entry, prefix = '') {
-  if (entry.isFile) return [[prefix + entry.name, await new Promise((res, rej) => entry.file(res, rej))]];
-  const reader = entry.createReader();
-  const out = [];
-  for (let batch; (batch = await new Promise((res, rej) => reader.readEntries(res, rej))).length; ) {
-    for (const e of batch) out.push(...(await walk(e, `${prefix}${entry.name}/`)));
-  }
-  return out;
-}
-
-async function onDrop(e) {
-  e.preventDefault();
-  els.drop.classList.remove('over');
-  // Entries must be grabbed synchronously; the DataTransfer is cleared after the first await.
-  const entries = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
-  try {
-    for (const entry of entries) for (const [p, f] of await walk(entry)) pending.set(p, f);
-  } catch {
-    toast('读取文件夹失败', 'bad');
-  }
+function addPending(entries) {
+  for (const [p, f] of entries) pending.set(p, f);
   renderPending();
 }
 
@@ -122,29 +73,18 @@ function onSubmit(e) {
   }
   try { localStorage.setItem('name', els.name.value); } catch {}
 
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', api + '/submit');
-  const fill = els.bar.firstChild;
-  xhr.upload.onprogress = (ev) => { fill.style.width = `${(ev.loaded / ev.total) * 100}%`; };
   els.err.textContent = '';
-  els.bar.hidden = false;
-  fill.style.width = '0';
   els.submit.disabled = true;
-  xhr.onerror = () => { els.bar.hidden = true; els.submit.disabled = false; els.err.textContent = '网络错误'; };
-  xhr.onload = () => {
-    els.bar.hidden = true;
-    if (xhr.status !== 200) {
+  send(api + '/submit', fd, els.bar).then(({ error }) => {
+    if (error) {
       els.submit.disabled = false;
-      let msg = '提交失败';
-      try { msg = JSON.parse(xhr.responseText).error; } catch {}
-      return (els.err.textContent = msg);
+      return (els.err.textContent = error);
     }
     pending.clear();
     renderPending();
     toast('提交成功');
     load();
-  };
-  xhr.send(fd);
+  });
 }
 
 function renderMine(mine) {
